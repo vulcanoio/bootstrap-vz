@@ -5,10 +5,12 @@ from bootstrapvz.common.tasks import initd
 from bootstrapvz.common.tools import log_check_call
 from bootstrapvz.common.tools import sed_i
 from bootstrapvz.providers.gce.tasks import boot as gceboot
+from distutils.version import LooseVersion
 import os
 import os.path
 import shutil
 import subprocess
+import tempfile
 import time
 
 ASSETS_DIR = os.path.normpath(os.path.join(os.path.dirname(__file__), 'assets'))
@@ -32,11 +34,67 @@ class AddDockerBinary(Task):
 
 	@classmethod
 	def run(cls, info):
-		docker_version = info.manifest.plugins['docker_daemon'].get('version', 'latest')
-		docker_url = 'https://get.docker.io/builds/Linux/x86_64/docker-' + docker_version
-		bin_docker = os.path.join(info.root, 'usr/bin/docker')
-		log_check_call(['wget', '-O', bin_docker, docker_url])
-		os.chmod(bin_docker, 0755)
+		docker_version = LooseVersion(info.manifest.plugins['docker_daemon'].get('version', 'latest'))
+		filename = 'docker-' + str(docker_version)
+		# Docker versions > 1.10 are released in a compressed tarball,
+		# and so it needs to be treated diferently.
+		if docker_version > '1.10':
+			cls._run_new_versions(info, filename)
+		else:
+			cls._run_old_versions(info, filename)
+
+	@classmethod
+	def _run_new_versions(cls, info, filename):
+		filename += '.tgz'
+		url = cls._get_url(filename)
+		filepath = os.path.join(info.root, filename)
+		try:
+			cls._download_file(url, filepath)
+			extraction_path = tempfile.mkdtemp(prefix='docker-extration-')
+			cls._extract_files(filepath, extraction_path)
+			bin_path = cls._get_bin_path(info)
+			cls._install_docker_files(extraction_path, bin_path)
+		finally:
+			try:
+				os.remove(filepath)
+			except OSError:
+				pass
+			shutil.rmtree(extraction_path, ignore_errors=True)
+
+	@classmethod
+	def _run_old_versions(cls, info, filename):
+		url = cls._get_url(filename)
+		bin_docker = os.path.join(cls._get_bin_path(info), 'docker')
+		cls._download_file(url, bin_docker)
+		cls._make_executable(bin_docker)
+
+	@classmethod
+	def _get_url(cls, filename):
+		return 'https://get.docker.io/builds/Linux/x86_64/' + filename
+
+	@classmethod
+	def _download_file(cls, url, dest_path):
+		log_check_call(['wget', '-O', dest_path, url])
+
+	@classmethod
+	def _extract_files(cls, filepath, extraction_path):
+		log_check_call(['tar', 'xf', filepath, '-C', extraction_path])
+
+	@classmethod
+	def _get_bin_path(cls, info):
+		return os.path.join(info.root, 'usr/bin')
+
+	@classmethod
+	def _install_docker_files(cls, source_path, dest_path):
+		for root, dirs, files in os.walk(source_path, topdown=False):
+			for file in files:
+				full_filename = os.path.join(root, file)
+				cls._make_executable(full_filename)
+				shutil.move(full_filename, os.path.join(dest_path, file))
+
+	@classmethod
+	def _make_executable(cls, filepath):
+		os.chmod(filepath, 0755)
 
 
 class AddDockerInit(Task):
