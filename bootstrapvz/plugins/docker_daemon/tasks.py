@@ -32,12 +32,8 @@ class AddDockerBinary(Task):
 
 	@classmethod
 	def run(cls, info):
-		docker_version = info.manifest.plugins['docker_daemon'].get('version', False)
-		docker_url = 'https://get.docker.io/builds/Linux/x86_64/docker-'
-		if docker_version:
-			docker_url += docker_version
-		else:
-			docker_url += 'latest'
+		docker_version = info.manifest.plugins['docker_daemon'].get('version', 'latest')
+		docker_url = 'https://get.docker.io/builds/Linux/x86_64/docker-' + docker_version
 		bin_docker = os.path.join(info.root, 'usr/bin/docker')
 		log_check_call(['wget', '-O', bin_docker, docker_url])
 		os.chmod(bin_docker, 0755)
